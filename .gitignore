@@ -1,0 +1,18 @@
+# Client dataset — never commit, never distribute
+dataset/
+*.zip
+
+# Environment / secrets
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
