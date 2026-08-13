@@ -300,10 +300,15 @@ def _build_cover_lines(recorder_cover: pd.DataFrame, recorder_policy: pd.DataFra
 
     status_by_policy = recorder_policy.set_index("policy_id")["status"]
     df["policy_status"] = df["policy_id"].map(status_by_policy)
+    effective_date_by_policy = recorder_policy.set_index("policy_id")["effective_date"]
+    end_date_by_policy = recorder_policy.set_index("policy_id")["end_date"]
+    df["effective_date"] = df["policy_id"].map(effective_date_by_policy)
+    df["end_date"] = df["policy_id"].map(end_date_by_policy)
 
     return df[[
         "client_id", "vertical", "policy_id", "product", "canonical_cover",
         "limit_amount", "limit_basis", "excess_amount", "policy_status",
+        "effective_date", "end_date",
     ]]
 
 

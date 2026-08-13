@@ -62,6 +62,22 @@ class CoverBenchmark:
 # Comparator matching
 # ---------------------------------------------------------------------------
 
+def _is_valid_positive_number(value) -> bool:
+    """Return True only for finite numeric values greater than zero.
+
+    A truthiness check is not sufficient for pandas/numpy data because ``bool(np.nan)``
+    is True.  Letting NaN reach the distance calculation can turn a missing profile into
+    an invalid (and, after clamping, potentially perfect) similarity score.
+    """
+    if value is None or not pd.notna(value):
+        return False
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return False
+    return bool(np.isfinite(numeric) and numeric > 0)
+
+
 def _log_dist(a: float, b: float) -> float:
     """Normalised (0..1-ish) distance between two positive numbers on a log scale."""
     a = max(a, 1.0)
@@ -80,13 +96,36 @@ def find_comparators(ds: Dataset, prospect: Prospect, max_n: int = 50) -> Compar
         components = []
         weights = []
 
-        if prospect.employee_count and row["employee_count"]:
+        if (
+            _is_valid_positive_number(prospect.employee_count)
+            and _is_valid_positive_number(row["employee_count"])
+        ):
             components.append(1 - _log_dist(prospect.employee_count, row["employee_count"]))
             weights.append(1.0)
-        if prospect.turnover_gbp and row["turnover_gbp"]:
+        if (
+            _is_valid_positive_number(prospect.turnover_gbp)
+            and _is_valid_positive_number(row["turnover_gbp"])
+        ):
             components.append(1 - _log_dist(prospect.turnover_gbp, row["turnover_gbp"]))
             weights.append(1.0)
-        if prospect_stage_rank is not None and row["funding_stage_rank"] is not None:
+        if (
+            _is_valid_positive_number(prospect.funding_raised_gbp)
+            and _is_valid_positive_number(row["funding_raised_gbp"])
+        ):
+            components.append(
+                1 - _log_dist(
+                    prospect.funding_raised_gbp,
+                    row["funding_raised_gbp"],
+                )
+            )
+            # Funding amount is useful context but partially overlaps with funding stage,
+            # so it carries less weight than headcount and turnover.
+            weights.append(0.75)
+        if (
+            prospect_stage_rank is not None
+            and pd.notna(prospect_stage_rank)
+            and pd.notna(row["funding_stage_rank"])
+        ):
             stage_dist = abs(prospect_stage_rank - row["funding_stage_rank"]) / 6.0
             components.append(1 - stage_dist)
             weights.append(0.75)
@@ -95,6 +134,8 @@ def find_comparators(ds: Dataset, prospect: Prospect, max_n: int = 50) -> Compar
             similarity = 0.0  # same vertical only, no other signal available
         else:
             similarity = float(np.average(components, weights=weights))
+        if not np.isfinite(similarity):
+            similarity = 0.0
         similarity = max(0.0, min(1.0, similarity))
 
         scored.append(Comparator(
@@ -160,22 +201,54 @@ def benchmark_cover(ds: Dataset, comparator_ids: list[str], cover: str, current_
     (secondary, parsed) evidence."""
 
     cl = ds.cover_lines
-    cl_sub = cl[(cl["client_id"].isin(comparator_ids)) & (cl["canonical_cover"] == cover)]
-    limits_a = cl_sub["limit_amount"].dropna().tolist()
-    sources_a = len(limits_a)
+    cl_sub = cl[(cl["client_id"].isin(comparator_ids)) & (cl["canonical_cover"] == cover)].copy()
+    cl_sub["limit_amount"] = pd.to_numeric(cl_sub["limit_amount"], errors="coerce")
+    cl_sub = cl_sub[
+        cl_sub["limit_amount"].notna()
+        & np.isfinite(cl_sub["limit_amount"])
+        & (cl_sub["limit_amount"] > 0)
+    ].copy()
+
+    # A company is one peer even if it renewed over several years or has several cover
+    # lines. Prefer an active policy, then the latest policy dates, then the highest limit
+    # as a deterministic tie-breaker within the same policy/period.
+    status_priority = {"Active": 0, "Expired": 1, "Cancelled": 2}
+    cl_sub["_status_priority"] = cl_sub.get(
+        "policy_status", pd.Series(index=cl_sub.index, dtype=object)
+    ).map(status_priority).fillna(3)
+    for date_column in ("effective_date", "end_date"):
+        if date_column in cl_sub.columns:
+            cl_sub[f"_{date_column}"] = pd.to_datetime(cl_sub[date_column], errors="coerce")
+        else:
+            cl_sub[f"_{date_column}"] = pd.NaT
+    cl_sub = cl_sub.sort_values(
+        ["client_id", "_status_priority", "_effective_date", "_end_date", "limit_amount"],
+        ascending=[True, True, False, False, False],
+    )
+    recorder_limits = cl_sub.drop_duplicates("client_id").set_index("client_id")["limit_amount"]
 
     db = ds.deck_benchmarks
-    db_sub = db[(db["client_id"].isin(comparator_ids)) & (db["canonical_cover"] == cover)]
-    limits_b = db_sub["current_limit_numeric"].dropna().tolist()
-    sources_b = len(limits_b)
+    db_sub = db[(db["client_id"].isin(comparator_ids)) & (db["canonical_cover"] == cover)].copy()
+    db_sub["current_limit_numeric"] = pd.to_numeric(db_sub["current_limit_numeric"], errors="coerce")
+    db_sub = db_sub[
+        db_sub["current_limit_numeric"].notna()
+        & np.isfinite(db_sub["current_limit_numeric"])
+        & (db_sub["current_limit_numeric"] > 0)
+    ]
+    # Deck data has no policy dates. Collapse any duplicates deterministically, and use it
+    # only when the company has no primary Recorder value for this cover.
+    deck_limits = db_sub.groupby("client_id")["current_limit_numeric"].max()
+    deck_limits = deck_limits[~deck_limits.index.isin(recorder_limits.index)]
 
-    all_limits = limits_a + limits_b
-    n_peers = len(all_limits)
+    peer_limits = pd.concat([recorder_limits, deck_limits])
+    sources_a = len(recorder_limits)
+    sources_b = len(deck_limits)
+    n_peers = len(peer_limits)
 
     if n_peers == 0:
         return None
 
-    arr = np.array(all_limits, dtype=float)
+    arr = peer_limits.to_numpy(dtype=float)
     median = float(np.median(arr))
     p25 = float(np.percentile(arr, 25))
     p75 = float(np.percentile(arr, 75))
@@ -190,9 +263,9 @@ def benchmark_cover(ds: Dataset, comparator_ids: list[str], cover: str, current_
 
     source_bits = []
     if sources_a:
-        source_bits.append(f"{sources_a} live/expired policy record(s) from Capsule's Recorder platform")
+        source_bits.append(f"{sources_a} company value(s) from Capsule's Recorder platform")
     if sources_b:
-        source_bits.append(f"{sources_b} prior health-check benchmark record(s)")
+        source_bits.append(f"{sources_b} company value(s) from prior health-check benchmarks")
     source_note = " and ".join(source_bits) + "."
 
     return CoverBenchmark(
