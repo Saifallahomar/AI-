@@ -66,24 +66,37 @@ def _call_anthropic(context: dict, model: str) -> Optional[str]:
 
 
 def _call_gemini(context: dict, model: str) -> Optional[str]:
-    """Stub - fill in if a Gemini key is available during the hackathon.
-    Keeping the same function signature means app.py / recommendation.py never need to change."""
+    """Uses the official google-genai client SDK to generate recommendations using Gemini."""
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
     except ImportError:
         return None
+
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return None
-    genai.configure(api_key=api_key)
-    gmodel = genai.GenerativeModel(model, system_instruction=SYSTEM_PROMPT)
-    resp = gmodel.generate_content(_build_user_prompt(context))
+
+    client = genai.Client(api_key=api_key)
+    
+    # Set system instruction and prompt via GenerateContentConfig
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        temperature=0.2, # Low temperature to keep facts deterministic
+    )
+
+    resp = client.models.generate_content(
+        model=model,
+        contents=_build_user_prompt(context),
+        config=config,
+    )
+    
     return (resp.text or "").strip() or None
 
 
 _PROVIDERS = {
     "anthropic": (_call_anthropic, os.environ.get("CAPSULE_AI_MODEL", "claude-sonnet-5")),
-    "gemini": (_call_gemini, os.environ.get("CAPSULE_AI_MODEL", "gemini-1.5-pro")),
+    "gemini": (_call_gemini, os.environ.get("CAPSULE_AI_MODEL", "gemini-2.5-flash")),
 }
 
 
@@ -92,7 +105,7 @@ def phrase_recommendation(recommendation) -> str:
     Returns AI-phrased prose, or the deterministic fallback explanation if no provider/key
     is configured or the call fails for any reason."""
 
-    provider_name = os.environ.get("CAPSULE_AI_PROVIDER", "anthropic").lower()
+    provider_name = os.environ.get("CAPSULE_AI_PROVIDER", "gemini").lower()
     fallback = recommendation.deterministic_explanation
 
     if provider_name not in _PROVIDERS:
