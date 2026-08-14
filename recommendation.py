@@ -74,7 +74,8 @@ def _retrieve_evidence(deck_recs: pd.DataFrame, vertical: str, cover: str, max_i
 
     snippets = []
     for _, row in matches.head(max_items).iterrows():
-        text = row.get("action") if isinstance(row.get("action"), str) else row.get("item")
+        text = row.get("action") if isinstance(
+            row.get("action"), str) else row.get("item")
         if isinstance(text, str) and text.strip():
             snippet = text.strip().replace("\n", " ")
             if len(snippet) > 280:
@@ -88,8 +89,8 @@ def build_recommendation(bm: CoverBenchmark, vertical: str, deck_recs: pd.DataFr
 
     if bm.status == "no_data":
         explanation = (
-            f"No current limit was provided for {bm.cover}, so this cannot be benchmarked "
-            f"with confidence. Among {bm.n_peers} comparable {vertical} companies with recorded "
+            f"No current limit was provided for {bm.cover}, so the prospect's current cover "
+            f"cannot be compared against the peer benchmark. Among {bm.n_peers} comparable {vertical} companies with recorded "
             f"cover, the median limit is {_fmt_gbp(bm.median_gbp)} (peer range "
             f"{_fmt_gbp(bm.p25_gbp)}\u2013{_fmt_gbp(bm.p75_gbp)}). We recommend confirming your "
             f"current limit for this line with a Capsule broker."
@@ -126,6 +127,7 @@ def build_recommendation(bm: CoverBenchmark, vertical: str, deck_recs: pd.DataFr
 
 def build_all_recommendations(benchmarks: list[CoverBenchmark], vertical: str, deck_recs: pd.DataFrame) -> list[Recommendation]:
     recs = [build_recommendation(bm, vertical, deck_recs) for bm in benchmarks]
-    priority_order = {"Immediate action": 0, "For consideration": 1, "Review at renewal": 2}
+    priority_order = {"Immediate action": 0,
+                      "For consideration": 1, "Review at renewal": 2}
     recs.sort(key=lambda r: priority_order.get(r.priority, 3))
     return recs

@@ -5,6 +5,7 @@ Run with: streamlit run app.py
 
 import os
 import streamlit as st
+from client_store import save_verified_client
 
 from data_loader import load_dataset, CANONICAL_COVERS
 from benchmark import Prospect, find_comparators, benchmark_all_covers
@@ -12,7 +13,8 @@ from recommendation import build_all_recommendations
 from ai_service import phrase_recommendation
 from report import build_report_pdf
 
-st.set_page_config(page_title="Capsule Cover Benchmarking", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="Capsule Cover Benchmarking",
+                   page_icon="🛡️", layout="wide")
 
 DATA_ROOT = os.environ.get("CAPSULE_DATA_ROOT", "dataset")
 
@@ -20,7 +22,8 @@ DATA_ROOT = os.environ.get("CAPSULE_DATA_ROOT", "dataset")
 SUPPORTED_VERTICALS = ["FinTech & Venture"]
 VERTICAL_LABEL_TO_DATASET = {"FinTech & Venture": "FinTech"}
 
-FUNDING_STAGES = ["Bootstrapped", "Pre-Seed", "Seed", "Series A", "Series B", "Series C", "Series D", "Other"]
+FUNDING_STAGES = ["Bootstrapped", "Pre-Seed", "Seed",
+                  "Series A", "Series B", "Series C", "Series D", "Other"]
 
 
 @st.cache_resource(show_spinner="Loading Capsule dataset...")
@@ -77,7 +80,8 @@ if dataset_error:
     )
     st.stop()
 
-pages = ["1. Business profile", "2. Current cover", "3. Benchmark results", "4. Download report"]
+pages = ["1. Business profile", "2. Current cover",
+         "3. Benchmark results", "4. Download report"]
 choice = st.sidebar.radio("Steps", pages, index=st.session_state["page"] - 1)
 st.session_state["page"] = pages.index(choice) + 1
 
@@ -90,7 +94,8 @@ st.sidebar.caption(
 # Optional: preload a synthetic test brief
 with st.sidebar.expander("Load a test prospect (synthetic, fictional)"):
     briefs = ds.synthetic_briefs
-    fin_briefs = briefs[briefs["vertical"] == "FinTech"] if not briefs.empty else briefs
+    fin_briefs = briefs[briefs["vertical"] ==
+                        "FinTech"] if not briefs.empty else briefs
     if not fin_briefs.empty:
         options = ["—"] + fin_briefs["brief_id"].tolist()
         pick = st.selectbox("FinTech synthetic briefs", options)
@@ -98,12 +103,15 @@ with st.sidebar.expander("Load a test prospect (synthetic, fictional)"):
             row = fin_briefs[fin_briefs["brief_id"] == pick].iloc[0]
             st.caption(row["business_description"])
             if st.button("Use this brief"):
-                st.session_state["employee_count"] = float(row["employee_count"])
+                st.session_state["employee_count"] = float(
+                    row["employee_count"])
                 st.session_state["turnover_gbp"] = float(row["turnover_gbp"])
-                st.session_state["funding_raised_gbp"] = float(row["total_funding_raised_gbp"])
+                st.session_state["funding_raised_gbp"] = float(
+                    row["total_funding_raised_gbp"])
                 st.session_state["funding_series"] = row["funding_series"]
                 st.session_state["page"] = 1
-                st.success("Loaded. Current cover was NOT auto-filled — enter it on step 2 (deliberately fictional/no join to real cover data).")
+                st.success(
+                    "Loaded. Current cover was NOT auto-filled — enter it on step 2 (deliberately fictional/no join to real cover data).")
                 st.rerun()
 
 # ---------------------------------------------------------------------------
@@ -111,32 +119,74 @@ with st.sidebar.expander("Load a test prospect (synthetic, fictional)"):
 # ---------------------------------------------------------------------------
 if st.session_state["page"] == 1:
     st.header("1. Business profile")
-    st.write("Tell us about your business. This is used to find comparable companies.")
+    st.write(
+        "Tell us about your business. This is used to find comparable companies."
+    )
 
-    vertical_label = st.selectbox("Vertical", SUPPORTED_VERTICALS, index=0)
+    vertical_label = st.selectbox(
+        "Vertical",
+        SUPPORTED_VERTICALS,
+        index=0
+    )
     st.session_state["vertical"] = vertical_label
+
     if vertical_label != "FinTech & Venture":
-        st.info("Only FinTech & Venture is wired up end-to-end in this prototype build.")
+        st.info(
+            "Only FinTech & Venture is wired up end-to-end in this prototype build."
+        )
 
     col1, col2 = st.columns(2)
+
     with col1:
         st.session_state["employee_count"] = st.number_input(
-            "Number of employees", min_value=0, value=int(st.session_state["employee_count"] or 0), step=1,
+            "Number of employees",
+            min_value=0,
+            value=int(st.session_state["employee_count"] or 0),
+            step=1,
         )
+
         st.session_state["turnover_gbp"] = st.number_input(
-            "Turnover, past financial year (£)", min_value=0,
-            value=int(st.session_state["turnover_gbp"] or 0), step=10_000,
+            "Turnover, past financial year (£)",
+            min_value=0,
+            value=int(st.session_state["turnover_gbp"] or 0),
+            step=10_000,
         )
+
     with col2:
         st.session_state["funding_raised_gbp"] = st.number_input(
-            "Total funding raised (£, if applicable)", min_value=0,
-            value=int(st.session_state["funding_raised_gbp"] or 0), step=10_000,
+            "Total funding raised (£, if applicable)",
+            min_value=0,
+            value=int(st.session_state["funding_raised_gbp"] or 0),
+            step=10_000,
         )
-        current_stage = st.session_state["funding_series"] or FUNDING_STAGES[0]
-        idx = FUNDING_STAGES.index(current_stage) if current_stage in FUNDING_STAGES else 0
-        st.session_state["funding_series"] = st.selectbox("Funding stage", FUNDING_STAGES, index=idx)
 
-    st.button("Next: Current cover →", on_click=lambda: st.session_state.update(page=2))
+        # Funding stage must be explicitly selected by the broker.
+        # It should NOT automatically default to "Bootstrapped".
+        funding_options = ["Select funding stage"] + FUNDING_STAGES
+
+        current_stage = st.session_state["funding_series"]
+
+        if current_stage in FUNDING_STAGES:
+            idx = FUNDING_STAGES.index(current_stage) + 1
+        else:
+            idx = 0
+
+        selected_stage = st.selectbox(
+            "Funding stage",
+            funding_options,
+            index=idx,
+        )
+
+        st.session_state["funding_series"] = (
+            None
+            if selected_stage == "Select funding stage"
+            else selected_stage
+        )
+
+    st.button(
+        "Next: Current cover →",
+        on_click=lambda: st.session_state.update(page=2),
+    )
 
 # ---------------------------------------------------------------------------
 # Page 2: Current cover
@@ -153,11 +203,13 @@ elif st.session_state["page"] == 2:
                 f"{cover} — current limit (£)", min_value=0,
                 value=int(existing or 0), step=10_000, key=f"cover_{cover}",
             )
-            st.session_state["current_covers"][cover] = float(val) if val > 0 else None
+            st.session_state["current_covers"][cover] = float(
+                val) if val > 0 else None
 
     c1, c2 = st.columns(2)
     c1.button("← Back", on_click=lambda: st.session_state.update(page=1))
-    c2.button("Next: Benchmark results →", on_click=lambda: st.session_state.update(page=3))
+    c2.button("Next: Benchmark results →",
+              on_click=lambda: st.session_state.update(page=3))
 
 # ---------------------------------------------------------------------------
 # Page 3: Benchmark results
@@ -166,7 +218,8 @@ elif st.session_state["page"] == 3:
     st.header("3. Benchmark results")
 
     if not st.session_state["employee_count"] and not st.session_state["turnover_gbp"]:
-        st.warning("Add at least employee count or turnover on step 1 for a meaningful comparator match.")
+        st.warning(
+            "Add at least employee count or turnover on step 1 for a meaningful comparator match.")
 
     with st.spinner("Finding comparators and benchmarking cover..."):
         prospect = Prospect(
@@ -179,8 +232,10 @@ elif st.session_state["page"] == 3:
         )
         comparator_result = find_comparators(ds, prospect, max_n=50)
         comparator_ids = [c.client_id for c in comparator_result.comparators]
-        benchmarks = benchmark_all_covers(ds, comparator_ids, st.session_state["current_covers"])
-        recommendations = build_all_recommendations(benchmarks, prospect.vertical, ds.deck_recommendations)
+        benchmarks = benchmark_all_covers(
+            ds, comparator_ids, st.session_state["current_covers"])
+        recommendations = build_all_recommendations(
+            benchmarks, prospect.vertical, ds.deck_recommendations)
 
         ai_texts = {}
         for rec in recommendations:
@@ -193,7 +248,8 @@ elif st.session_state["page"] == 3:
         "ai_texts": ai_texts,
     }
 
-    conf_colour = {"High": "green", "Medium": "orange", "Low": "red"}.get(comparator_result.confidence, "grey")
+    conf_colour = {"High": "green", "Medium": "orange",
+                   "Low": "red"}.get(comparator_result.confidence, "grey")
     st.markdown(
         f"**Comparator group:** {len(comparator_result.comparators)} companies matched "
         f"(pool of {comparator_result.pool_size} in {prospect.vertical}) &nbsp;&nbsp;"
@@ -203,13 +259,15 @@ elif st.session_state["page"] == 3:
 
     st.divider()
 
-    priority_icon = {"Immediate action": "🔴", "For consideration": "🟠", "Review at renewal": "🟢"}
+    priority_icon = {"Immediate action": "🔴",
+                     "For consideration": "🟠", "Review at renewal": "🟢"}
 
     for rec in recommendations:
         with st.container(border=True):
             top = st.columns([3, 1])
             top[0].subheader(rec.cover)
-            top[1].markdown(f"### {priority_icon.get(rec.priority,'')} {rec.priority}")
+            top[1].markdown(
+                f"### {priority_icon.get(rec.priority, '')} {rec.priority}")
 
             m = st.columns(4)
             m[0].metric("Current cover", _fmt_gbp(rec.current_limit_gbp))
@@ -217,7 +275,8 @@ elif st.session_state["page"] == 3:
             m[2].metric("Comparator group", f"{rec.n_peers} companies")
             m[3].metric("Confidence", rec.confidence)
 
-            st.caption(f"Peer 25th–75th percentile: {_fmt_gbp(rec.p25_gbp)} – {_fmt_gbp(rec.p75_gbp)}")
+            st.caption(
+                f"Peer 25th–75th percentile: {_fmt_gbp(rec.p25_gbp)} – {_fmt_gbp(rec.p75_gbp)}")
 
             st.write(ai_texts[rec.cover])
             if rec.evidence_snippets:
@@ -229,7 +288,8 @@ elif st.session_state["page"] == 3:
     st.divider()
     c1, c2 = st.columns(2)
     c1.button("← Back", on_click=lambda: st.session_state.update(page=2))
-    c2.button("Next: Download report →", on_click=lambda: st.session_state.update(page=4))
+    c2.button("Next: Download report →",
+              on_click=lambda: st.session_state.update(page=4))
 
 # ---------------------------------------------------------------------------
 # Page 4: Download report
@@ -238,8 +298,10 @@ elif st.session_state["page"] == 4:
     st.header("4. Download report")
 
     results = st.session_state.get("results")
+
     if not results:
         st.warning("Run the benchmark on step 3 first.")
+
     else:
         business_profile = {
             "vertical": results["prospect"].vertical,
@@ -248,22 +310,56 @@ elif st.session_state["page"] == 4:
             "funding_raised_gbp": results["prospect"].funding_raised_gbp,
             "funding_series": results["prospect"].funding_series,
         }
+
         pdf_bytes = build_report_pdf(
             business_profile,
             results["comparator_result"],
             results["recommendations"],
             results["ai_texts"],
         )
+
         st.success("Report ready.")
+
         st.download_button(
             "⬇️ Download PDF report",
             data=pdf_bytes,
             file_name="capsule_cover_benchmark_report.pdf",
             mime="application/pdf",
         )
+
         st.caption(
             "Contains: business profile, peer comparator summary, per-cover benchmark & "
             "recommendation with priority/confidence/evidence, and the guidance disclaimer."
         )
 
-    st.button("← Back", on_click=lambda: st.session_state.update(page=3))
+        # ---------------------------------------------------------------
+        # Add verified client to future benchmark pool
+        # ---------------------------------------------------------------
+        st.divider()
+
+        st.subheader("Add to benchmark pool")
+
+        st.write(
+            "If this prospect has become a verified Capsule client, "
+            "their confirmed profile and current cover can be added "
+            "to the benchmark dataset for future comparisons."
+        )
+
+        confirmed = st.checkbox(
+            "I confirm that this client's profile and current cover have been verified."
+        )
+
+        if st.button(
+            "Add verified client to benchmark pool",
+            disabled=not confirmed,
+        ):
+            client_id = save_verified_client(results["prospect"])
+
+            st.success(
+                f"Client added to the benchmark pool. ID: {client_id}"
+            )
+
+    st.button(
+        "← Back",
+        on_click=lambda: st.session_state.update(page=3),
+    )

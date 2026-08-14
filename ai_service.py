@@ -61,13 +61,14 @@ def _call_anthropic(context: dict, model: str) -> Optional[str]:
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": _build_user_prompt(context)}],
     )
-    parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
+    parts = [b.text for b in resp.content if getattr(
+        b, "type", None) == "text"]
     return "\n".join(parts).strip() or None
 
 
 def _call_gemini(context: dict, model: str) -> Optional[str]:
-    """Stub - fill in if a Gemini key is available during the hackathon.
-    Keeping the same function signature means app.py / recommendation.py never need to change."""
+    """Native Gemini SDK path - only relevant if a raw Google API key is ever issued
+    instead of the event's OpenAI-compatible proxy key. Not what this event uses."""
     try:
         import google.generativeai as genai
     except ImportError:
@@ -81,9 +82,36 @@ def _call_gemini(context: dict, model: str) -> Optional[str]:
     return (resp.text or "").strip() or None
 
 
+def _call_litellm(context: dict, model: str) -> Optional[str]:
+    """The event's actual issued key: an OpenAI-compatible endpoint (litellm proxy)
+    in front of Gemini models. Base URL is fixed for the event; only the API key is
+    secret and comes from the environment, never hardcoded here."""
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return None
+    api_key = os.environ.get("LITELLM_API_KEY")
+    if not api_key:
+        return None
+    base_url = os.environ.get(
+        "LITELLM_BASE_URL", "https://litellm.perceptura.com")
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": _build_user_prompt(context)},
+        ],
+        max_tokens=300,
+    )
+    text = resp.choices[0].message.content
+    return (text or "").strip() or None
+
+
 _PROVIDERS = {
     "anthropic": (_call_anthropic, os.environ.get("CAPSULE_AI_MODEL", "claude-sonnet-5")),
     "gemini": (_call_gemini, os.environ.get("CAPSULE_AI_MODEL", "gemini-1.5-pro")),
+    "litellm": (_call_litellm, os.environ.get("CAPSULE_AI_MODEL", "gemini-3.6-flash")),
 }
 
 
