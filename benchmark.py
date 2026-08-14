@@ -53,7 +53,7 @@ class CoverBenchmark:
     pct_peers_above_prospect: float | None
     confidence: str
     confidence_reason: str
-    status: str          # significantly_below / slightly_below / around / above / no_data
+    status: str          # significantly_below / slightly_below / around / above / no_data / insufficient_peer_data
     priority: str         # Immediate action / For consideration / Review at renewal / (none)
     source_note: str
 
@@ -246,7 +246,23 @@ def benchmark_cover(ds: Dataset, comparator_ids: list[str], cover: str, current_
     n_peers = len(peer_limits)
 
     if n_peers == 0:
-        return None
+        conf, conf_reason = _confidence_for_n(0)
+        return CoverBenchmark(
+            cover=cover,
+            current_limit_gbp=current_limit,
+            n_peers=0,
+            median_gbp=None,
+            p25_gbp=None,
+            p75_gbp=None,
+            pct_peers_above_prospect=None,
+            confidence=conf,
+            confidence_reason=conf_reason,
+            status="insufficient_peer_data",
+            # Lack of peer evidence is not evidence that the prospect is underinsured.
+            # Keep the item visible for human review without labelling it urgent.
+            priority="For consideration",
+            source_note="No comparator companies had this cover on record in the available sources.",
+        )
 
     arr = peer_limits.to_numpy(dtype=float)
     median = float(np.median(arr))

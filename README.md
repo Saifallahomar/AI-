@@ -74,22 +74,36 @@ to try the tool without typing in a real profile.
 ### Comparator matching (`benchmark.py: find_comparators`)
 1. Filter Capsule's combined company-profile table (`healthcheck_questionnaire.csv` +
    `hubspot_company_context.csv`, coalesced in `data_loader.py`) to the prospect's vertical.
-2. Score every same-vertical company on log-scale closeness of headcount and turnover, plus
-   funding-stage distance (Pre-Seed → Seed → Series A → B → C…), skipping any factor missing
-   data for a given peer rather than penalising it.
+2. Score every same-vertical company on log-scale closeness of headcount and turnover
+   (weight 1.0 each) and total funding raised (weight 0.75), plus funding-stage distance
+   (weight 0.75; Pre-Seed → Seed → Series A → B → C…). Missing, non-finite, zero or
+   negative numeric values are excluded from the calculation rather than treated as valid
+   matches. If no usable comparison factor is available for a company, its similarity is 0.
 3. Rank and return the top matches (up to 50). If the whole vertical pool is smaller than
    that, everything in it is returned and comparator confidence is marked accordingly
    (High ≥25 companies, Medium 10–24, Low <10).
 
 ### Cover benchmarking (`benchmark.py: benchmark_cover`)
-For each cover the prospect specified, peer limits are pulled from two dataset sources,
+For each cover the prospect specified, peer limits are taken from two dataset sources,
 restricted to the comparator set found above:
 - `recorder_cover_lines.csv` — clean numeric `limit_amount` per coverage line (primary source)
 - `deck_limit_benchmarks.csv` — parsed from text like `£10m` / `£10m - £15m` (secondary source)
 
-Median / 25th / 75th percentile and % of peers above the prospect are computed with
-`numpy` — **no LLM ever touches these numbers**. Per-cover confidence is High/Medium/Low
-based on how many peers actually had that cover on record (≥10 / 5–9 / <5).
+Each comparator company contributes at most one representative value per cover, even when it
+has several policy years or cover-line records. Recorder records are selected in this order:
+active policy first, then the latest effective date, then the latest end date, with the highest
+valid limit used only as a deterministic tie-breaker within the same policy period. Expired or
+cancelled policies therefore remain usable when no higher-priority record is available.
+
+Recorder is the primary source. A company's parsed deck limit is used only when that company
+has no valid Recorder value for the same cover; the two sources are not counted as separate
+peers. `n_peers` consequently means the number of **unique comparator companies**, not the
+number of policy or cover-line records.
+
+Median / 25th / 75th percentile and the percentage of peers above the prospect are computed
+with `numpy` from those unique-company values — **no LLM ever touches these numbers**.
+Per-cover confidence is High/Medium/Low based on the number of unique companies contributing
+a value (≥10 / 5–9 / <5).
 
 ### Cover-name normalisation
 Raw cover text is very inconsistent across the dataset (e.g. "Directors' and Officers'
@@ -113,6 +127,11 @@ Status is classified against the peer distribution: below the 25th percentile �
 adequate cover). Each recommendation also carries up to 2 short evidence snippets pulled from
 Capsule's own historical `deck_recommendations.csv` for the same vertical and cover, to ground
 the explanation in real past broker guidance.
+
+If no comparator company has a usable value for a cover, the cover remains visible rather than
+being silently omitted. It is returned as `insufficient_peer_data`, with Low confidence and
+*For consideration* priority. The explanation makes clear that this is a data-availability
+limitation, not evidence that the prospect's current limit is too high or too low.
 
 ### AI layer (`ai_service.py`)
 The AI is only ever given a small JSON object of *already-computed* facts (limit, peer
@@ -141,10 +160,10 @@ confidence + evidence/source, closing with the required disclaimer:
 ## Known limitations (honest, for judges)
 
 - Comparator *company* counts comfortably reach 30–50 for FinTech & Venture (43 in the pool).
-  Comparator counts *per specific cover type* are smaller (typically 10–16 with both data
-  sources combined) because relatively few clients have Recorder policy data or a benchmarked
-  deck — this is a real limitation of the underlying dataset, not the algorithm, and is exactly
-  why per-cover confidence is reported separately from comparator-pool confidence.
+  After selecting one representative value per company and using deck data only as a fallback,
+  comparator counts *per specific cover type* are smaller (currently 4–13 unique companies for
+  FinTech). This is a real limitation of the underlying dataset, not the algorithm, and is
+  exactly why per-cover confidence is reported separately from comparator-pool confidence.
 - Only FinTech & Venture is wired up end-to-end; the other 3 verticals (Consumer, MedTech,
   Tech) use the same dataset shape and the same code, so extending is a matter of adding them
   to `SUPPORTED_VERTICALS` in `app.py`, not new logic.
