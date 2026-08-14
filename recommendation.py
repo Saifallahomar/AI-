@@ -28,6 +28,7 @@ def _fmt_gbp(x: float | None) -> str:
 
 
 _STATUS_TEXT = {
+    "insufficient_peer_data": "there is insufficient peer data to classify your current limit",
     "no_data": "you did not record a current limit for this cover",
     "significantly_below": "your current limit is significantly below the peer benchmark",
     "slightly_below": "your current limit is below the peer median",
@@ -86,7 +87,15 @@ def _retrieve_evidence(deck_recs: pd.DataFrame, vertical: str, cover: str, max_i
 def build_recommendation(bm: CoverBenchmark, vertical: str, deck_recs: pd.DataFrame) -> Recommendation:
     status_text = _STATUS_TEXT[bm.status]
 
-    if bm.status == "no_data":
+    if bm.status == "insufficient_peer_data":
+        explanation = (
+            f"There were no comparable {vertical} companies with a recorded {bm.cover} limit "
+            "in the available benchmark sources, so a peer median or percentile range cannot "
+            "be calculated. This is a data-availability limitation, not an indication that your "
+            "current limit is too low or too high; discuss the cover with a Capsule broker if "
+            "a tailored review is needed."
+        )
+    elif bm.status == "no_data":
         explanation = (
             f"No current limit was provided for {bm.cover}, so this cannot be benchmarked "
             f"with confidence. Among {bm.n_peers} comparable {vertical} companies with recorded "

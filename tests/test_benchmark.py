@@ -31,6 +31,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from benchmark import Prospect, _classify_status, find_comparators, benchmark_cover
 from data_loader import Dataset
+from recommendation import build_recommendation
 
 
 COVER = "Cyber"
@@ -52,7 +53,14 @@ def _dataset(
         "funding_series",
         "funding_stage_rank",
     ]
-    cover_columns = ["client_id", "canonical_cover", "limit_amount", "policy_status"]
+    cover_columns = [
+        "client_id",
+        "canonical_cover",
+        "limit_amount",
+        "policy_status",
+        "effective_date",
+        "end_date",
+    ]
     deck_columns = ["client_id", "canonical_cover", "current_limit_numeric"]
 
     return Dataset(
@@ -150,6 +158,93 @@ class ComparatorMatchingTests(unittest.TestCase):
 
 
 class CoverBenchmarkTests(unittest.TestCase):
+    def test_active_policy_is_preferred_over_newer_expired_policy(self):
+        ds = _dataset(
+            [_profile("a")],
+            cover_lines=[
+                {
+                    "client_id": "a",
+                    "canonical_cover": COVER,
+                    "limit_amount": 1_000_000,
+                    "policy_status": "Active",
+                    "effective_date": "2024-01-01",
+                    "end_date": "2025-01-01",
+                },
+                {
+                    "client_id": "a",
+                    "canonical_cover": COVER,
+                    "limit_amount": 9_000_000,
+                    "policy_status": "Expired",
+                    "effective_date": "2025-01-01",
+                    "end_date": "2026-01-01",
+                },
+            ],
+        )
+
+        result = benchmark_cover(ds, ["a"], COVER, 500_000)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.n_peers, 1)
+        self.assertEqual(result.median_gbp, 1_000_000)
+
+    def test_latest_effective_year_is_used_when_status_is_equal(self):
+        ds = _dataset(
+            [_profile("a")],
+            cover_lines=[
+                {
+                    "client_id": "a",
+                    "canonical_cover": COVER,
+                    "limit_amount": 1_000_000,
+                    "policy_status": "Expired",
+                    "effective_date": "2022-01-01",
+                    "end_date": "2023-01-01",
+                },
+                {
+                    "client_id": "a",
+                    "canonical_cover": COVER,
+                    "limit_amount": 3_000_000,
+                    "policy_status": "Expired",
+                    "effective_date": "2024-01-01",
+                    "end_date": "2025-01-01",
+                },
+            ],
+        )
+
+        result = benchmark_cover(ds, ["a"], COVER, 500_000)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.n_peers, 1)
+        self.assertEqual(result.median_gbp, 3_000_000)
+
+    def test_highest_limit_breaks_tie_within_same_policy_period(self):
+        ds = _dataset(
+            [_profile("a")],
+            cover_lines=[
+                {
+                    "client_id": "a",
+                    "canonical_cover": COVER,
+                    "limit_amount": 1_000_000,
+                    "policy_status": "Active",
+                    "effective_date": "2025-01-01",
+                    "end_date": "2026-01-01",
+                },
+                {
+                    "client_id": "a",
+                    "canonical_cover": COVER,
+                    "limit_amount": 2_000_000,
+                    "policy_status": "Active",
+                    "effective_date": "2025-01-01",
+                    "end_date": "2026-01-01",
+                },
+            ],
+        )
+
+        result = benchmark_cover(ds, ["a"], COVER, 500_000)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.n_peers, 1)
+        self.assertEqual(result.median_gbp, 2_000_000)
+
     def test_percentiles_use_one_observation_per_company(self):
         ds = _dataset(
             [_profile("a"), _profile("b")],
@@ -211,6 +306,17 @@ class CoverBenchmarkTests(unittest.TestCase):
         self.assertEqual(result.n_peers, 0)
         self.assertIsNone(result.median_gbp)
         self.assertEqual(result.confidence, "Low")
+        self.assertEqual(result.status, "insufficient_peer_data")
+        self.assertEqual(result.priority, "For consideration")
+        self.assertIn("No comparator companies", result.source_note)
+
+        recommendation = build_recommendation(
+            result,
+            "FinTech",
+            pd.DataFrame(columns=["vertical", "item", "action"]),
+        )
+        self.assertIn("no comparable FinTech companies", recommendation.deterministic_explanation)
+        self.assertIn("data-availability limitation", recommendation.deterministic_explanation)
 
     def test_status_boundaries_are_deterministic(self):
         self.assertEqual(_classify_status(None, 1, 2, 3), "no_data")
